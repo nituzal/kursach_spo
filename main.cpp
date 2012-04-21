@@ -1,8 +1,31 @@
-#include <Windows.h>
+//#include <Windows.h>
 #include <stdio.h>
 #include <conio.h>
 
-#define NTSIGNATURE(a) ((LPVOID)((BYTE *)a + ((PIMAGE_DOS_HEADER)a)->e_lfanew))
+typedef wchar_t WCHAR;
+typedef WCHAR *LPWSTR;
+typedef unsigned char BYTE;
+typedef unsigned short WORD;
+typedef unsigned long DWORD;
+typedef DWORD *LPDWORD;
+typedef void *HANDLE;
+typedef unsigned long __w64 ULONG_PTR;
+typedef ULONG_PTR SIZE_T;
+//typedef const WCHAR *LPWSTR;
+typedef LPWSTR LPCWSTR;
+typedef LPCWSTR LPCTSTR, LPTSTR;
+typedef long LONG;
+typedef LONG PLONG;
+typedef const void *LPVOID, *LPCVOID;
+typedef unsigned int UINT;
+typedef int BOOL;
+typedef BOOL *LPBOOL;
+typedef char CHAR;
+typedef CHAR *LPSTR;
+typedef const CHAR *LPCSTR;
+typedef void *PVOID;
+
+#define NTSIGNATURE(a) ((LPVOID)((DWORD *)a + 0x3c))
 #define GETSIZEOFHEADERS(a) (*((DWORD*)(a + 0x54)))
 #define ALIGN_DOWN(x, align) (x & ~(align - 1))
 #define ALIGN_UP(x, align) ((x & (align - 1))?ALIGN_DOWN(x,align)+align:x)
@@ -11,7 +34,10 @@
 #define pSectionTable(p) ((BYTE*)(p + 0x18 + OPT_SZ(p)))
 #define pLastSection(p) (pSectionTable(p) + (NumOfSec(p) - 1) * 0x28)
 
-/*typedef struct _FILETIME {
+#define IMAGE_NT_SIGNATURE 0x00004550
+#define MAX_PATH 260
+
+typedef struct _FILETIME {
   DWORD dwLowDateTime;
   DWORD dwHighDateTime;
 } FILETIME; 
@@ -25,15 +51,28 @@ typedef struct _WIN32_FIND_DATA {
   DWORD nFileSizeLow;
   DWORD dwReserved0;
   DWORD dwReserved1;
-  TCHAR cFileName[ MAX_PATH ];
-  TCHAR cAlternateFileName[ 14 ];
-} WIN32_FIND_DATA;
+  WCHAR cFileName[260];
+  WCHAR cAlternateFileName[14];
+} WIN32_FIND_DATA, *PWIN32_FIND_DATA, *LPWIN32_FIND_DATA;
 
 typedef struct _SECURITY_ATTRIBUTES {
   DWORD  nLength;
   LPVOID lpSecurityDescriptor;
   BOOL   bInheritHandle;
-} SECURITY_ATTRIBUTES, *PSECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;*/
+} SECURITY_ATTRIBUTES, *PSECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;
+
+typedef struct _OVERLAPPED {
+  ULONG_PTR Internal;
+  ULONG_PTR InternalHigh;
+  union {
+    struct {
+      DWORD Offset;
+      DWORD OffsetHigh;
+    };
+    PVOID  Pointer;
+  };
+  HANDLE    hEvent;
+} OVERLAPPED, *LPOVERLAPPED;
 
 wchar_t* CharToWchar(char*);
 char* WcharToChar(wchar_t*);
@@ -41,6 +80,8 @@ bool FindFiles();
 DWORD FindFuncs(char *);
 int StrCmp(char*, char*);
 void GetAPIs();
+
+
 
 HANDLE (__stdcall *create_file)(LPWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE); 
 BOOL (__stdcall *close_handle)(HANDLE);
@@ -53,8 +94,10 @@ BOOL (__stdcall *write_file)(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytes
 DWORD (__stdcall *get_current_directory)(DWORD nBufferLength, LPTSTR lpBuffer);
 HANDLE (__stdcall *find_first_file)(LPCTSTR lpFileName, LPWIN32_FIND_DATA lpFindFileData);
 BOOL (__stdcall *find_next_file)(HANDLE hFindFile, LPWIN32_FIND_DATA lpFindFileData);
+BOOL (__stdcall *find_close)(HANDLE hFindFile);
 int (__stdcall *mb_to_wc)(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
 int (__stdcall *wc_to_mb)(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCSTR lpDefaultChar, LPBOOL lpUsedDefaultChar);
+wchar_t* (__cdecl *wcs_cat)(wchar_t *strDestination, const wchar_t *strSource);
 
 int main(int argc, char *argv[])
 {
@@ -149,9 +192,11 @@ int main(int argc, char *argv[])
 
 wchar_t* CharToWchar(char *temp)
 {
-	int len = strlen(temp) + 1;
-	wchar_t *wStr = new wchar_t[len];
-	mb_to_wc(CP_ACP,NULL,temp,-1,wStr,len);
+	int len = 0;
+	while(temp[len])
+		len++;
+	wchar_t *wStr = new wchar_t[len + 1];
+	mb_to_wc(0, NULL, temp, -1, wStr, len);
 	return wStr;
 }
 
@@ -160,8 +205,8 @@ char* WcharToChar(wchar_t *temp)
 	int len = 0;
 	while(temp[len])
 		len++;
-	char *Str = new char[len+1];
-	wc_to_mb(1251,NULL,temp,-1,Str,len,NULL,NULL);
+	char *Str = new char[len + 1];
+	wc_to_mb(1251, NULL, temp, -1, Str, len, NULL, NULL);
 	Str[len] = '\0';
 	//delete temp;
 	return Str;
@@ -170,7 +215,7 @@ char* WcharToChar(wchar_t *temp)
 bool FindFiles()
 {
 	WIN32_FIND_DATA FindFileData;
-	HANDLE hFind = INVALID_HANDLE_VALUE;
+	HANDLE hFind = NULL;//INVALID_HANDLE_VALUE;
     wchar_t DirSpec[MAX_PATH];  // directory specification
     DWORD dwError;
 	DWORD BufSize = MAX_PATH;
@@ -180,31 +225,31 @@ bool FindFiles()
 	get_current_directory(BufSize, DirSpec);
     printf ("\nTarget directory is %s\n", WcharToChar(DirSpec));
     //strncpy (DirSpec, path, strlen(path)+1);
-    wcscat(DirSpec, CharToWchar("\\*"));
+    wcs_cat(DirSpec, CharToWchar("\\*"));
 
     hFind = find_first_file(DirSpec, &FindFileData);
 
-    if (hFind == INVALID_HANDLE_VALUE) 
+   /* if (hFind == INVALID_HANDLE_VALUE) 
     {
        printf ("Invalid file handle. Error is %u\n", GetLastError());
        return false;
     } 
     else 
-    {
+    {*/
 		printf ("First file name is %s\nFile size = %x\n", WcharToChar(FindFileData.cFileName), FindFileData.nFileSizeLow);
        while (find_next_file(hFind, &FindFileData) != 0) 
        {
           printf ("Next file name is %s\nFile size = %x\n", WcharToChar(FindFileData.cFileName), FindFileData.nFileSizeLow);
        }
     
-       dwError = GetLastError();
-       FindClose(hFind);
-       if (dwError != ERROR_NO_MORE_FILES) 
+   //    dwError = GetLastError();
+       find_close(hFind);
+  /*     if (dwError != ERROR_NO_MORE_FILES) 
        {
           printf ("FindNextFile error. Error is %u\n", dwError);
           return false;
        }
-    }
+    }*/
     return true;
 }
 
@@ -283,8 +328,10 @@ void GetAPIs()
 	mb_to_wc = (int (__stdcall *)(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar))FindFuncs("MultiByteToWideChar");
 	wc_to_mb = (int (__stdcall *)(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCSTR lpDefaultChar, LPBOOL lpUsedDefaultChar))FindFuncs("WideCharToMultiByte");
 	get_current_directory = (DWORD (__stdcall *)(DWORD nBufferLength, LPTSTR lpBuffer))FindFuncs("GetCurrentDirectoryW");
-	find_first_file = (HANDLE (__stdcall *)(LPCTSTR lpFileName, LPWIN32_FIND_DATAW lpFindFileData))FindFuncs("FindFirstFileW");
-	find_next_file = (BOOL (__stdcall *)(HANDLE hFindFile, LPWIN32_FIND_DATAW lpFindFileData))FindFuncs("FindNextFileW");
+	find_first_file = (HANDLE (__stdcall *)(LPCTSTR lpFileName, LPWIN32_FIND_DATA lpFindFileData))FindFuncs("FindFirstFileW");
+	find_next_file = (BOOL (__stdcall *)(HANDLE hFindFile, LPWIN32_FIND_DATA lpFindFileData))FindFuncs("FindNextFileW");
+	find_close = (BOOL (__stdcall *)(HANDLE hFindFile))FindFuncs("FindClose");
+	wcs_cat = (wchar_t* (__cdecl *)(wchar_t *strDestination, const wchar_t *strSource))FindFuncs("wcscat");
 }
 
 int StrCmp(char *str1, char *str2)
